@@ -5461,8 +5461,8 @@ JSValue JS_Call(JSContext *ctx, int call_flags)
                                     val = JS_EXCEPTION;
                                 } else {
                                     d = fd->func.f_f(d);
+                                    val = JS_NewFloat64(ctx, d);
                                 }
-                                val = JS_NewFloat64(ctx, d);
                             }
                             break;
                         default:
