@@ -323,6 +323,7 @@ __attribute__((packed)) /* unaligned 64 bit access in 32-bit mode */
 
 typedef struct {
     void *opaque;
+    JSValue values[];
 } JSObjectUserData;
 
 struct JSObject {
@@ -1126,24 +1127,46 @@ int JS_GetClassID(JSContext *ctx, JSValue val)
     }
 }
 
-void JS_SetOpaque(JSContext *ctx, JSValue val, void *opaque)
+void JS_SetOpaque(JSContext *ctx, JSValue obj, void *opaque)
 {
     JSObject *p;
-    assert(JS_IsPtr(val));
-    p = JS_VALUE_TO_PTR(val);
+    assert(JS_IsPtr(obj));
+    p = JS_VALUE_TO_PTR(obj);
     assert(p->mtag == JS_MTAG_OBJECT);
     assert(p->class_id >= JS_CLASS_USER);
     p->u.user.opaque = opaque;
 }
 
-void *JS_GetOpaque(JSContext *ctx, JSValue val)
+void *JS_GetOpaque(JSContext *ctx, JSValue obj)
 {
     JSObject *p;
-    assert(JS_IsPtr(val));
-    p = JS_VALUE_TO_PTR(val);
+    assert(JS_IsPtr(obj));
+    p = JS_VALUE_TO_PTR(obj);
     assert(p->mtag == JS_MTAG_OBJECT);
     assert(p->class_id >= JS_CLASS_USER);
     return p->u.user.opaque;
+}
+
+void JS_SetUserValue(JSContext *ctx, JSValue obj, uint32_t idx, JSValue val)
+{
+    JSObject *p;
+    assert(JS_IsPtr(obj));
+    p = JS_VALUE_TO_PTR(obj);
+    assert(p->mtag == JS_MTAG_OBJECT);
+    assert(p->class_id >= JS_CLASS_USER);
+    assert((idx + 1) < p->extra_size);
+    p->u.user.values[idx] = val;
+}
+
+JSValue JS_GetUserValue(JSContext *ctx, JSValue obj, uint32_t idx)
+{
+    JSObject *p;
+    assert(JS_IsPtr(obj));
+    p = JS_VALUE_TO_PTR(obj);
+    assert(p->mtag == JS_MTAG_OBJECT);
+    assert(p->class_id >= JS_CLASS_USER);
+    assert((idx + 1) < p->extra_size);
+    return p->u.user.values[idx];
 }
 
 static JSObject *js_get_object_class(JSContext *ctx, JSValue val, int class_id)
@@ -2384,15 +2407,19 @@ static JSValue JS_NewObjectClass(JSContext *ctx, int class_id, int extra_size)
     return JS_NewObjectProtoClass(ctx, ctx->class_proto[class_id], class_id, extra_size);
 }
 
-JSValue JS_NewObjectClassUser(JSContext *ctx, int class_id)
+JSValue JS_NewObjectClassUser(JSContext *ctx, int class_id, uint32_t n_values)
 {
     JSObject *p;
+    uint32_t i;
     assert(class_id >= JS_CLASS_USER);
+    assert(n_values <= 254); /* arbitrary but limited by the bit width of extra_size */
     p = JS_NewObjectProtoClass1(ctx, ctx->class_proto[class_id], class_id,
-                                sizeof(JSObjectUserData));
+                                sizeof(JSObjectUserData) + n_values * sizeof(JSValue));
     if (!p)
         return JS_EXCEPTION;
     p->u.user.opaque = NULL;
+    for(i = 0; i < n_values; i++)
+        p->u.user.values[i] = JS_UNDEFINED;
     return JS_VALUE_FROM_PTR(p);
 }
 
@@ -11998,6 +12025,13 @@ static void gc_mark_flush(GCMarkState *s)
                     gc_mark(s, p->u.regexp.source);
                     gc_mark(s, p->u.regexp.byte_code);
                     break;
+                default:
+                    if (p->class_id >= JS_CLASS_USER) {
+                        int i;
+                        for(i = 0; i < p->extra_size - 1; i++) 
+                            gc_mark(s, p->u.user.values[i]);
+                    }
+                    break;
                 }
             }
             break;
@@ -12308,6 +12342,13 @@ static void gc_thread_block(JSContext *ctx, void *ptr)
             case JS_CLASS_REGEXP:
                 gc_thread_pointer(ctx, &p->u.regexp.source);
                 gc_thread_pointer(ctx, &p->u.regexp.byte_code);
+                break;
+            default:
+                if (p->class_id >= JS_CLASS_USER) {
+                    int i;
+                    for(i = 0; i < p->extra_size - 1; i++)
+                        gc_thread_pointer(ctx, &p->u.user.values[i]);
+                }
                 break;
             }
         }
