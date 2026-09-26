@@ -12191,16 +12191,19 @@ static void gc_mark_all(JSContext *ctx, BOOL keep_atoms)
             if (b->gc_mark) {
                 b->gc_mark = 0;
             } else {
-                JSObject *p = (void *)ptr;
-                /* call the user finalizer if needed */
-                if (p->mtag == JS_MTAG_OBJECT && p->class_id >= JS_CLASS_USER &&
-                    ctx->c_finalizer_table[p->class_id - JS_CLASS_USER] != NULL) {
-                    ctx->c_finalizer_table[p->class_id - JS_CLASS_USER](ctx, p->u.user.opaque);
-                }
                 /* merge all the consecutive free blocks */
-                ptr1 = ptr + size;
-                while (ptr1 < ctx->heap_free && ((JSFreeBlock *)ptr1)->gc_mark == 0) {
-                    ptr1 += get_mblock_size(ptr1);
+                ptr1 = ptr;
+                for(;;) {
+                    JSObject *p = (void *)ptr1;
+                    /* call the user finalizer if needed */
+                    if (p->mtag == JS_MTAG_OBJECT && p->class_id >= JS_CLASS_USER &&
+                        ctx->c_finalizer_table[p->class_id - JS_CLASS_USER] != NULL) {
+                        ctx->c_finalizer_table[p->class_id - JS_CLASS_USER](ctx, p->u.user.opaque);
+                    }
+                    ptr1 += size;
+                    if (ptr1 >= ctx->heap_free || ((JSFreeBlock *)ptr1)->gc_mark != 0)
+                        break;
+                    size = get_mblock_size(ptr1);
                 }
                 size = ptr1 - ptr;
                 set_free_block(b, size);
